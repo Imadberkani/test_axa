@@ -1,0 +1,14 @@
+artifact_uri: file:///c:/Users/berka/Desktop/test/mlruns/655603104255853188/3fb5e5c2a0dc466293241822d7417b7d/artifacts
+end_time: 1777298232466
+entry_point_name: ''
+experiment_id: '655603104255853188'
+lifecycle_stage: active
+run_id: 3fb5e5c2a0dc466293241822d7417b7d
+run_name: lightgbm
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1777298226073
+status: 4
+tags: []
+user_id: berka

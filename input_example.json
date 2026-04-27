@@ -1,0 +1,14 @@
+{
+  "dataframe_split": {
+    "columns": [
+      "height",
+      "width",
+      "depth",
+      "weight"
+    ],
+    "data": [
+      [0.1, 0.766127, 0.1, 2.2 ]
+
+    ]
+  }
+}
