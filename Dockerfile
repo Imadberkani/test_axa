@@ -20,9 +20,10 @@ COPY build_model/ /opt/model/
 # Deps déclarées par le modèle + serveur Flask
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /opt/model/requirements.txt \
-                "flask>=3.0,<4.0" "gunicorn>=23.0,<24.0" "python-dotenv"
+                "flask>=3.0,<4.0" "gunicorn>=23.0,<24.0" "python-dotenv" "openpyxl"
 
 COPY app.py /app/app.py
+COPY notebooks/utils.py /app/utils.py
 COPY data/dataset.xlsx /app/data/dataset.xlsx
 
 EXPOSE 8080
