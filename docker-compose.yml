@@ -1,0 +1,13 @@
+services:
+  api:
+    build:
+      context: .
+    image: axa-api:${RUN_ID}
+    container_name: axa-api
+    environment:
+      MODEL_PATH: /opt/model
+      RUN_ID: ${RUN_ID}
+      PORT: 8080
+    ports:
+      - "${PORT:-8080}:8080"
+    restart: unless-stopped

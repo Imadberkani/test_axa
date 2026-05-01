@@ -10,6 +10,7 @@ POST /psi       body = {"dataframe_split": {...}}   (uniquement actual)
 
 import io
 import os
+import sys
 from pathlib import Path
 
 import mlflow
@@ -20,6 +21,9 @@ from flask import Flask, jsonify, request
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
+
+
+sys.path.append(str(ROOT / "notebooks"))
 
 RUN_ID = os.environ.get("RUN_ID", "local")
 PORT = int(os.environ.get("PORT", 5000))
@@ -67,7 +71,12 @@ def health():
 
 @app.post("/predict")
 def predict():
-    return jsonify(run_id=RUN_ID, probabilities=proba(read_request_df()).tolist())
+    probas = proba(read_request_df())
+    classes = MODEL.named_steps["classifier"].classes_
+    return jsonify(
+        run_id=RUN_ID,
+        probabilities=[dict(zip(map(str, classes), p)) for p in probas.tolist()],
+    )
 
 
 @app.post("/psi")

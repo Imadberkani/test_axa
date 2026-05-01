@@ -24,6 +24,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.metrics import (
     RocCurveDisplay,
     accuracy_score,
@@ -32,22 +33,42 @@ from sklearn.metrics import (
     f1_score,
     roc_curve,
 )
+from sklearn.preprocessing import LabelEncoder
 
 
 # ----------------------------------------------------------------------
 # ROC — matplotlib (sklearn native)
 # ----------------------------------------------------------------------
-def plot_roc_mpl(y_true, y_proba, ax=None, name: str = "Model"):
+def plot_roc_mpl(y_true, y_proba, ax=None, name: str = "Model", class_names=None):
     """ROC curve via sklearn.RocCurveDisplay. Matplotlib classic, just curve + AUC.
+
+    Binary  : ``y_proba`` 1-D ``(n,)`` — une seule courbe.
+    Multiclasse : ``y_proba`` 2-D ``(n, n_classes)`` — une courbe par classe
+    (one-vs-rest). ``class_names`` est utilisé pour la légende ; à défaut on
+    prend ``np.unique(y_true)``.
 
     Requires matplotlib (`poetry add matplotlib`).
     Returns the matplotlib Axes.
     """
     import matplotlib.pyplot as plt
 
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 5))
-    RocCurveDisplay.from_predictions(y_true, y_proba, ax=ax, name=name)
+
+    if y_proba.ndim == 1:
+        RocCurveDisplay.from_predictions(y_true, y_proba, ax=ax, name=name)
+    else:
+        if class_names is None:
+            class_names = np.unique(y_true)
+        for i, cls in enumerate(class_names):
+            y_binary = (y_true == cls).astype(int)
+            RocCurveDisplay.from_predictions(
+                y_binary, y_proba[:, i], ax=ax, name=f"class {cls}"
+            )
+
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Random")
     ax.set_title("ROC Curve")
     ax.legend(loc="lower right")
@@ -93,10 +114,29 @@ def plot_roc_plotly(y_true, y_proba, title: str = "ROC Curve"):
 # ----------------------------------------------------------------------
 # Threshold table
 # ----------------------------------------------------------------------
-def threshold_table(y_true, y_proba, thresholds=None) -> pd.DataFrame:
-    """Precision / recall / F1 / specificity / accuracy per threshold."""
+def threshold_table(y_true, y_proba, thresholds=None, class_name=None, classes=None) -> pd.DataFrame:
+    """Precision / recall / F1 / specificity / accuracy per threshold.
+
+    Binary  : ``y_proba`` 1-D ``(n,)``.
+    Multiclasse : ``y_proba`` 2-D ``(n, n_classes)`` + ``class_name`` (la classe
+    à analyser en one-vs-rest). ``classes`` est la liste des labels dans
+    l'ordre des colonnes (typiquement ``pipeline.named_steps["classifier"].classes_``) ;
+    à défaut on prend ``np.unique(y_true)``.
+    """
     y_true = np.asarray(y_true)
     y_proba = np.asarray(y_proba)
+
+    if y_proba.ndim == 2:
+        if class_name is None:
+            raise ValueError("class_name est requis quand y_proba est 2-D (multiclasse).")
+        if classes is None:
+            classes = np.unique(y_true)
+        classes = np.asarray(classes)
+        col = int(np.where(classes == class_name)[0][0])
+
+        y_true = (y_true == class_name).astype(int)
+        y_proba = y_proba[:, col]
+
     if thresholds is None:
         thresholds = np.arange(0.05, 1.0, 0.05)
 
@@ -162,11 +202,20 @@ def lift_table(
     y_train=None,
     y_train_proba=None,
     tops=(1, 5, 10),
+    class_name=None,
+    classes=None,
 ) -> pd.DataFrame:
     """Cumulative metrics at the top K% of the population (sorted by score desc).
 
     Same logic as `plot_lift`'s tooltip, but aggregated on the top K% you care
     about in production (default: top 1 %, 5 %, 10 %).
+
+    Binary  : ``y_val_proba`` 1-D ``(n,)``.
+    Multiclasse : ``y_val_proba`` 2-D ``(n, n_classes)`` + ``class_name`` (la
+    classe à analyser en one-vs-rest). ``classes`` est la liste des labels
+    dans l'ordre des colonnes de ``y_val_proba`` (typiquement
+    ``pipeline.named_steps["classifier"].classes_``) ; à défaut on prend
+    ``np.unique(y_val)``.
 
     If ``y_train`` / ``y_train_proba`` are passed, two extra columns are added
     (``lift_train``, ``score_threshold_train``) — useful to spot overfitting
@@ -182,6 +231,24 @@ def lift_table(
     lift_train (optional)   : same lift computed on the training set
     score_threshold_train   : same threshold computed on the training set
     """
+    y_val = np.asarray(y_val)
+    y_val_proba = np.asarray(y_val_proba)
+
+    if y_val_proba.ndim == 2:
+        if class_name is None:
+            raise ValueError("class_name est requis quand y_val_proba est 2-D (multiclasse).")
+        if classes is None:
+            classes = np.unique(y_val)
+        classes = np.asarray(classes)
+        col = int(np.where(classes == class_name)[0][0])
+
+        y_val = (y_val == class_name).astype(int)
+        y_val_proba = y_val_proba[:, col]
+
+        if y_train is not None and y_train_proba is not None:
+            y_train = (np.asarray(y_train) == class_name).astype(int)
+            y_train_proba = np.asarray(y_train_proba)[:, col]
+
     val = _top_k_metrics(y_val, y_val_proba, tops)
     df = pd.DataFrame(val)
 
@@ -196,25 +263,15 @@ def lift_table(
 # ----------------------------------------------------------------------
 # Lift — curve (plotly)
 # ----------------------------------------------------------------------
-def plot_lift(y_true, y_proba, title: str = "Cumulative Gain"):
-    """Cumulative gain curve.
+def _lift_trace(y_binary, proba, name):
+    """Construit une trace Scatter (cumulative gain) pour un vecteur binaire."""
+    y_binary = np.asarray(y_binary)
+    proba = np.asarray(proba)
+    n = len(y_binary)
+    baseline = float(y_binary.mean())
 
-    x = % of population ranked by score (descending)
-    y = % of positives captured
-
-    Tooltip reports, at each point:
-    - % of population considered (top K%)
-    - % of positives captured
-    - lift = cum_positive_rate / mean(y)  (× vs random)
-    - absolute volume captured (count of positives)
-    """
-    y_true = np.asarray(y_true)
-    y_proba = np.asarray(y_proba)
-    baseline = float(y_true.mean())
-
-    order = np.argsort(-y_proba)
-    y_sorted = y_true[order]
-    n = len(y_sorted)
+    order = np.argsort(-proba)
+    y_sorted = y_binary[order]
     total_pos = max(int(y_sorted.sum()), 1)
 
     rank_pct = np.arange(1, n + 1) / n * 100
@@ -225,22 +282,44 @@ def plot_lift(y_true, y_proba, title: str = "Cumulative Gain"):
 
     customdata = np.stack([lift, cum_positives], axis=-1)
 
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=rank_pct,
-            y=cum_capture_pct,
-            mode="lines",
-            name="Model",
-            customdata=customdata,
-            hovertemplate=(
-                "Top %{x:.1f}% of population<br>"
-                "Captures %{y:.1f}% of positives<br>"
-                "Lift = %{customdata[0]:.2f}×<br>"
-                "Volume = %{customdata[1]:,.0f} positives<extra></extra>"
-            ),
-        )
+    return go.Scatter(
+        x=rank_pct,
+        y=cum_capture_pct,
+        mode="lines",
+        name=name,
+        customdata=customdata,
+        hovertemplate=(
+            f"<b>{name}</b><br>"
+            "Top %{x:.1f}% of population<br>"
+            "Captures %{y:.1f}% of positives<br>"
+            "Lift = %{customdata[0]:.2f}×<br>"
+            "Volume = %{customdata[1]:,.0f} positives<extra></extra>"
+        ),
     )
+
+
+def plot_lift(y_true, y_proba, class_names=None, title: str = "Cumulative Gain"):
+    """Cumulative gain curve — supporte binaire et multiclasse.
+
+    - ``y_proba`` 1-D ``(n,)``  : binaire, une seule courbe.
+    - ``y_proba`` 2-D ``(n, n_classes)`` : multiclasse, une courbe par classe
+      (one-vs-rest). ``class_names`` est utilisé pour la légende ; à défaut on
+      prend ``np.unique(y_true)``.
+    """
+    y_true = np.asarray(y_true)
+    y_proba = np.asarray(y_proba)
+
+    fig = go.Figure()
+
+    if y_proba.ndim == 1:
+        fig.add_trace(_lift_trace(y_true, y_proba, name="Model"))
+    else:
+        if class_names is None:
+            class_names = np.unique(y_true)
+        for i, cls in enumerate(class_names):
+            y_binary = (y_true == cls).astype(int)
+            fig.add_trace(_lift_trace(y_binary, y_proba[:, i], name=f"class {cls}"))
+
     fig.add_trace(
         go.Scatter(
             x=[0, 100],
@@ -428,3 +507,51 @@ def plot_psi_density(
         ),
     )
     return fig
+
+
+# ----------------------------------------------------------------------
+# Feature engineering
+# ----------------------------------------------------------------------
+def add_volume(X):
+    """Ajoute la colonne ``volume = height * width * depth``."""
+    X = X.copy()
+    X["volume"] = X["height"] * X["width"] * X["depth"]
+    return X
+
+
+# ----------------------------------------------------------------------
+# Model wrappers — LabelEncodedClassifier
+# ----------------------------------------------------------------------
+class LabelEncodedClassifier(BaseEstimator, ClassifierMixin):
+    """Wrap a classifier so it accepts arbitrary (string/object) labels.
+
+    Encodes ``y`` with :class:`LabelEncoder` at fit time and decodes the
+    predictions back to the original labels at predict time. ``predict_proba``
+    returns probabilities aligned with ``self.classes_``.
+    """
+
+    def __init__(self, classifier):
+        self.classifier = classifier
+
+    def fit(self, X, y, **fit_params):
+        self.label_encoder_ = LabelEncoder()
+        y_encoded = self.label_encoder_.fit_transform(y)
+
+        if fit_params.get("eval_set") is not None:
+            fit_params["eval_set"] = [
+                (Xe, self.label_encoder_.transform(ye))
+                for Xe, ye in fit_params["eval_set"]
+            ]
+
+        self.classifier_ = clone(self.classifier)
+        self.classifier_.fit(X, y_encoded, **fit_params)
+
+        self.classes_ = self.label_encoder_.classes_
+        return self
+
+    def predict(self, X):
+        y_pred_encoded = self.classifier_.predict(X)
+        return self.label_encoder_.inverse_transform(y_pred_encoded)
+
+    def predict_proba(self, X):
+        return self.classifier_.predict_proba(X)

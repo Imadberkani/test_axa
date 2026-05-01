@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
                 "flask>=3.0,<4.0" "gunicorn>=23.0,<24.0" "python-dotenv"
 
 COPY app.py /app/app.py
-COPY data/cs-training.csv /app/data/cs-training.csv
+COPY data/dataset.xlsx /app/data/dataset.xlsx
 
 EXPOSE 8080
 

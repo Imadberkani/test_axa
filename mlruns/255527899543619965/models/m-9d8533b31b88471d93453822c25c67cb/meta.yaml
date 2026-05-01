@@ -1,0 +1,10 @@
+artifact_location: file:///c:/Users/berka/Desktop/test/mlruns/255527899543619965/models/m-9d8533b31b88471d93453822c25c67cb/artifacts
+creation_timestamp: 1777637188912
+experiment_id: '255527899543619965'
+last_updated_timestamp: 1777637198178
+model_id: m-9d8533b31b88471d93453822c25c67cb
+model_type: null
+name: model
+source_run_id: 3d04c60c82c348b2895c2397a4d611a0
+status: 2
+status_message: null
